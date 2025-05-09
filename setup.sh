@@ -1,5 +1,8 @@
 #!/bin/bash
 
+
+#remember to run qemu-system-x86_64 -drive format=raw,file=fat:rw:esp -bios /usr/share/ovmf/OVMF.fd
+#for it to work :)
 set -e
 
 echo "Setting up the UEFI application development environment..."
@@ -7,7 +10,7 @@ echo "Setting up the UEFI application development environment..."
 # Update and install required packages
 echo "Installing required packages..."
 sudo apt update
-sudo apt install -y build-essential qemu ovmf rustc cargo
+sudo apt install -y build-essential qemu-system-x86 ovmf rustc cargo
 
 # Install Rust nightly toolchain
 echo "Installing Rust nightly toolchain..."
@@ -48,15 +51,22 @@ cp target/x86_64-unknown-uefi/debug/Woodix.efi esp/EFI/Boot/Bootx64.efi
 
 # Verify OVMF installation
 echo "Verifying OVMF installation..."
-OVMF_PATH=$(find /usr/share -name "OVMF_CODE.fd" | head -n 1)
-if [ -z "$OVMF_PATH" ]; then
-    echo "Error: OVMF_CODE.fd not found. Ensure the 'ovmf' package is installed."
-    exit 1
+if [ -f "/usr/share/ovmf/OVMF.fd" ]; then
+    OVMF_PATH="/usr/share/ovmf/OVMF.fd"
+elif [ -f "/usr/share/OVMF/OVMF_CODE_4M.fd" ]; then
+    OVMF_PATH="/usr/share/OVMF/OVMF_CODE_4M.fd" 
+elif [ -f "/usr/share/qemu/OVMF.fd" ]; then
+    OVMF_PATH="/usr/share/qemu/OVMF.fd"
+else
+    OVMF_PATH=$(find /usr/share -name "*OVMF*.fd" | head -n 1)
 fi
-echo "OVMF firmware found at: $OVMF_PATH"
-
 # Run the application in QEMU
 echo "Running the UEFI application in QEMU..."
+echo "This might not work, if it doesnt use the run.sh script"
+sleep 2
 qemu-system-x86_64 -drive format=raw,file=fat:rw:esp -bios "$OVMF_PATH"
+
+echo "setting permissions for the run.sh script"
+chmod +x run.sh
 
 echo "Setup complete!"
