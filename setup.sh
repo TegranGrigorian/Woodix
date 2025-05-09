@@ -26,9 +26,21 @@ rustup component add rust-src
 echo "Creating the ESP directory structure..."
 mkdir -p esp/EFI/Boot
 
+# Add a .cargo/config.toml file to simplify build commands
+echo "Configuring Cargo for UEFI builds..."
+mkdir -p .cargo
+cat > .cargo/config.toml <<EOF
+[unstable]
+build-std = ["core", "compiler_builtins"]
+build-std-features = ["compiler-builtins-mem"]
+
+[build]
+target = "x86_64-unknown-uefi"
+EOF
+
 # Build the project
 echo "Building the UEFI application..."
-cargo +nightly build
+cargo +nightly build -Z build-std=core,compiler_builtins --target x86_64-unknown-uefi
 
 # Copy the built EFI file to the ESP directory
 echo "Copying the built EFI file to the ESP directory..."
