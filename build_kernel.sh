@@ -12,9 +12,23 @@ if [ "$1" = "clean" ]; then
     exit 0
 fi
 
-# The issue is with the target - you should use x86_64-unknown-none, not uefi
+# Handle the nightly toolchain issue
 echo "=== Building kernel ==="
-cargo +nightly build -Z build-std=core,compiler_builtins --target x86_64-unknown-none
+# Check if rustup is installed
+if command -v rustup &> /dev/null; then
+    echo "Using rustup to invoke cargo with nightly toolchain..."
+    # Use rustup to run cargo with nightly toolchain
+    rustup run nightly cargo build -Z build-std=core,compiler_builtins --target x86_64-unknown-none
+else
+    # Fall back to trying cargo directly (assuming nightly is the default)
+    echo "Rustup not found, trying direct cargo command..."
+    cargo build -Z build-std=core,compiler_builtins --target x86_64-unknown-none || {
+        echo "Error: Failed to build with direct cargo command."
+        echo "Please install rustup or ensure the nightly toolchain is set as default."
+        echo "You can install rustup with: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+        exit 1
+    }
+fi
 
 # Analyze the output binary
 echo "=== Finding kernel binary ==="
@@ -218,16 +232,57 @@ elif [ "$1" = "simple" ]; then
     echo "Running bootloader with simple kernel..."
     ./bootloader_starter.sh
     exit 0
-else
-    # Copy the built kernel to ESP
-    echo -e "\n=== Setting up ESP structure ==="
-    mkdir -p "esp/EFI/WOODIX"
-    cp "$KERNEL_BIN" "esp/EFI/WOODIX/KERNEL.ELF"
-    chmod +x "esp/EFI/WOODIX/KERNEL.ELF"
-    
-    echo "✅ Kernel copied to esp/EFI/WOODIX/KERNEL.ELF"
-    ls -l esp/EFI/WOODIX/KERNEL.ELF
 fi
+
+# Add explicit test option if not already present
+if [ "$1" = "test" ]; then
+    echo "=== Creating and testing with simplified test kernel ==="
+    
+    # Create proper directory structure
+    mkdir -p esp/EFI/WOODIX
+    mkdir -p esp/EFI/BOOT
+    
+    # Assemble the test kernel with nasm
+    if command -v nasm > /dev/null; then
+        echo "Assembling test kernel with NASM..."
+        cd src/bootloader
+        nasm -f bin test_kernel.asm -o ../../esp/EFI/WOODIX/KERNEL.ELF
+        cd ../..
+        
+        # Create a copy in alternate locations the bootloader might check
+        cp esp/EFI/WOODIX/KERNEL.ELF esp/EFI/BOOT/KERNEL.ELF
+        cp esp/EFI/WOODIX/KERNEL.ELF esp/KERNEL.ELF
+    else
+        echo "NASM not found, creating binary kernel manually..."
+        # Machine code for a simple kernel that writes OK!
+        echo -ne '\x57\x44\x58\x4B\x52\x4E\x4C\x00\xB8\x00\x80\x0B\x00\x66\xC7\x00\x4F\x0A\x66\xC7\x40\x02\x4B\x0A\x66\xC7\x40\x04\x21\x0A\xFA\xF4\xEB\xFE' > esp/EFI/WOODIX/KERNEL.ELF
+        
+        # Create copies in alternate locations
+        cp esp/EFI/WOODIX/KERNEL.ELF esp/EFI/BOOT/KERNEL.ELF
+        cp esp/EFI/WOODIX/KERNEL.ELF esp/KERNEL.ELF
+    fi
+    
+    # Set proper permissions
+    chmod +x esp/EFI/WOODIX/KERNEL.ELF
+    chmod +x esp/EFI/BOOT/KERNEL.ELF
+    chmod +x esp/KERNEL.ELF
+    
+    echo "=== Directory listing for verification ==="
+    find esp -type f | sort
+    
+    # Launch bootloader
+    ./bootloader_starter.sh
+    exit 0
+fi
+
+# Copy the built kernel to ESP
+echo -e "\n=== Setting up ESP structure ==="
+mkdir -p "esp/EFI/WOODIX"
+cp "$KERNEL_BIN" "esp/EFI/WOODIX/KERNEL.ELF"
+chmod +x "esp/EFI/WOODIX/KERNEL.ELF"
+
+echo "✅ Kernel copied to esp/EFI/WOODIX/KERNEL.ELF"
+ls -l esp/EFI/WOODIX/KERNEL.ELF
 
 # Run the bootloader script if requested
 if [ "$1" = "run" ]; then

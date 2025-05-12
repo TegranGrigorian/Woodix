@@ -11,7 +11,7 @@ impl ColorCode {
         ColorCode((background as u8) << 4 | (foreground as u8))
     }
     
-    // Add a getter method as an alternative
+    #[allow(dead_code)]
     pub fn as_u8(&self) -> u8 {
         self.0
     }

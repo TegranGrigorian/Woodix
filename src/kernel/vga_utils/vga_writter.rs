@@ -9,6 +9,7 @@ pub struct Writer {
     column_position: usize,
     row_position: usize,
     color_code: ColorCode,
+    #[allow(dead_code)]
     buffer: &'static mut Buffer,
 }
 
@@ -165,7 +166,7 @@ impl fmt::Write for Writer {
     }
 }
 
-// Test function that can be called from the kernel
+#[allow(dead_code)]
 pub fn test() {
     let mut writer = Writer::new(ColorCode::new(Color::Yellow, Color::Black));
     writer.clear_screen();

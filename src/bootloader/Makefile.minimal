@@ -1,0 +1,30 @@
+# Simplified Makefile for minimal UEFI bootloader
+
+TARGET = bootx64.efi
+ASM_SOURCE = minimal_bootloader.asm
+ASM_OBJECT = minimal_bootloader.o
+
+# Tools
+ASM = nasm
+LD = ld
+
+# Find the correct paths for your system
+EFI_INCLUDES = -I/usr/include/efi -I/usr/include/efi/x86_64
+EFI_LIB_DIR = /usr/lib
+EFI_LD_SCRIPT = /usr/lib/elf_x86_64_efi.lds
+
+all: $(TARGET)
+
+$(ASM_OBJECT): $(ASM_SOURCE)
+	$(ASM) -f elf64 $< -o $@
+
+$(TARGET): $(ASM_OBJECT)
+	$(LD) -nostdlib -znocombreloc -shared -Bsymbolic -L $(EFI_LIB_DIR) -T $(EFI_LD_SCRIPT) \
+		-o $@ $< -lefi -lgnuefi
+	objcopy -j .text -j .sdata -j .data -j .dynamic -j .dynsym -j .rel \
+		-j .rela -j .reloc --target=efi-app-x86_64 $@ $@
+
+clean:
+	rm -f $(ASM_OBJECT) $(TARGET)
+
+.PHONY: all clean
