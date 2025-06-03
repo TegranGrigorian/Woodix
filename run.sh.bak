@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+
+# Create logs directory if it doesn't exist
+mkdir -p logs
+
+# Ensure we're using system libraries, not snap ones
+# This unsets any snap-related environment variables that might be interfering
+unset SNAP
+unset SNAP_NAME
+unset SNAP_REVISION
+unset LD_LIBRARY_PATH
+
+# Find OVMF firmware
+if [ -f /usr/share/ovmf/OVMF.fd ]; then
+    FIRMWARE="/usr/share/ovmf/OVMF.fd"
+elif [ -f /usr/share/edk2/ovmf/OVMF_CODE.fd ]; then
+    FIRMWARE="/usr/share/edk2/ovmf/OVMF_CODE.fd"
+else
+    echo "Error: OVMF UEFI firmware not found! Please install OVMF package."
+    exit 1
+fi
+
+# Use the direct system command with explicitly cleared environment
+env -i HOME="$HOME" PATH="/usr/bin:/bin" /usr/bin/qemu-system-x86_64 \
+    -bios "$FIRMWARE" \
+    -m 128M \
+    -drive if=pflash,format=raw,readonly=on,file=$FIRMWARE \
+    -drive format=raw,file=esp.img \
+    -vga std \
+    -serial file:logs/serial.log \
+    -debugcon file:logs/debug.log \
+    -d int,cpu_reset,guest_errors,page,in_asm \
+    -D logs/qemu_trace.log \
+    -no-reboot \
+    -no-shutdown \
+    -display gtk \
+    -monitor stdio \
+    -global isa-debugcon.iobase=0xe9

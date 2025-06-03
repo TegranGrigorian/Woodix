@@ -1,6 +1,14 @@
 #![no_std]
 #![no_main]
 
+// NOTE: If you encounter the error:
+// qemu-system-x86_64: symbol lookup error: /snap/core20/current/lib/x86_64-linux-gnu/libpthread.so.0: undefined symbol: __libc_pthread_init, version GLIBC_PRIVATE
+// This is a QEMU snap package issue, not a problem with the kernel code.
+// Solution: Use a native QEMU installation instead of the snap version:
+//   1. sudo apt remove --purge qemu-system-x86 (if using snap)
+//   2. sudo apt install qemu-system-x86
+//   3. Or run: flatpak install flathub org.qemu.QEMU
+
 use core::panic::PanicInfo;
 mod vga_utils;
 mod debug_port;
@@ -20,28 +28,85 @@ struct Stack([u8; STACK_SIZE]);
 #[no_mangle]
 static STACK: Stack = Stack([0; STACK_SIZE]);
 
-// Entry point - the bootloader will jump here
+// Multiboot2 header
+// Must be 8-byte aligned, fixed format
+#[repr(C, align(8))]
+struct MultibootHeader {
+    magic: u32,
+    architecture: u32,
+    header_length: u32,
+    checksum: u32,
+}
+
+// Using u32 array to ensure proper memory layout
+#[link_section = ".multiboot_header"]
+#[no_mangle]
+pub static MULTIBOOT2_HEADER: [u32; 23] = [
+    // Multiboot2 header (8 bytes)
+    0xE85250D6,                      // magic
+    0,                               // architecture (i386)
+    23 * 4,                          // header length in bytes (92 bytes)
+    0xFFFFFFFF - (0xE85250D6 + 0 + (23 * 4)) + 1, // checksum
+    
+    // Framebuffer tag (type 5)
+    5, 0,                            // type 5, flags 0
+    20,                              // size
+    80, 25, 0,                       // width, height, depth (text mode)
+    
+    // Module alignment tag (type 6)
+    6, 0,                            // type 6, flags 0
+    8,                               // size
+    
+    // Information request tag (type 1)
+    1, 0,                            // type 1, flags 0
+    16,                              // size
+    1, 3, 6, 10,                     // requesting tags: memory map and more
+    
+    // End tag
+    0, 0,                            // type 0, flags 0
+    8                                // size
+];
+
+//MONKEY TIMEEE!EE!!E!E!E!
 #[no_mangle]
 #[link_section = ".text.start"]
 pub unsafe extern "C" fn _start() -> ! {
-    // Immediately write to VGA buffer for visual confirmation that we're executing
+    // Test VGA memory directly with a very simple pattern
     let vga_buffer = 0xb8000 as *mut u16;
-    *vga_buffer = 0x0F5F;     // "_" in white on black (minimal code that shows we're alive)
     
-    // Try to add a delay to allow hardware to stabilize
-    for _ in 0..1000000 {
-        core::hint::spin_loop();
+    // Clear the screen with spaces
+    for i in 0..80*25 {
+        *vga_buffer.add(i) = 0x0720; // White on black space
     }
     
-    // Write additional characters for better visibility
-    *vga_buffer = 0x0F53;     // "S" in white on black
-    *(vga_buffer.add(1)) = 0x0F54; // "T" in white on black
-    *(vga_buffer.add(2)) = 0x0F52; // "R" in white on black
-    *(vga_buffer.add(3)) = 0x0F54; // "T" in white on black
-    *(vga_buffer.add(4)) = 0x0F21; // "!" in white on black
+    // Write a recognizable test pattern - a border of asterisks
+    for col in 0..80 {
+        // Top and bottom borders
+        *vga_buffer.add(col) = 0x4F2A;                // '*' white on red
+        *vga_buffer.add(24 * 80 + col) = 0x4F2A;      // '*' white on red
+    }
     
-    // Try to send debug info
+    for row in 0..25 {
+        // Left and right borders
+        *vga_buffer.add(row * 80) = 0x4F2A;           // '*' white on red
+        *vga_buffer.add(row * 80 + 79) = 0x4F2A;      // '*' white on red
+    }
+    
+    // Write a test message in the center with high visibility
+    let msg = b"[WOODIX OS BOOTING]";
+    let row = 12;
+    let col_start = 40 - msg.len() / 2;
+    for (i, &byte) in msg.iter().enumerate() {
+        *vga_buffer.add(row * 80 + col_start + i) = 0x2F00 | byte as u16; // Green on white
+    }
+    
+    // Debug port message
     debug_port::debug_write_str("\nKERNEL: _start reached\n");
+    
+    // Wait a bit to see the display
+    for _ in 0..10000000 {
+        core::hint::spin_loop();
+    }
     
     // Set up stack and prepare for main kernel code with minimal assembly
     core::arch::asm!(
@@ -69,68 +134,52 @@ pub unsafe extern "C" fn _start() -> ! {
 // Our main kernel function that will be called with a proper stack
 #[no_mangle]
 pub extern "C" fn kernel_main() -> ! {
-    // Send a debug message via port 0xE9 (captured by QEMU -debugcon)
-    debug_write_str("KERNEL: kernel_main entry point reached\n");
-    mark_kernel_stage(1, "Kernel entry point");
-    
-    // Write to VGA memory directly first to show we're alive
+    // Try another direct VGA test to rule out boot issues
     unsafe {
         let vga_buffer = 0xb8000 as *mut u16;
-        *vga_buffer = 0x0F4B; // "K" in white on black
+        
+        // Write "KERNEL" in center with high contrast
+        let msg = b"KERNEL MAIN";
+        let row = 5;
+        let col_start = 40 - msg.len() / 2;
+        for (i, &byte) in msg.iter().enumerate() {
+            *vga_buffer.add(row * 80 + col_start + i) = 0x5F00 | byte as u16; // White on magenta
+        }
     }
     
-    mark_kernel_stage(2, "VGA direct write complete");
+    // Debug message
+    debug_write_str("KERNEL: kernel_main reached\n");
     
-    // Create a writer with green text on black background
+    // Wait again to see if this display persists
+    for _ in 0..10000000 {
+        core::hint::spin_loop();
+    }
+    
+    // Now try the VGA writer
     let mut writer = Writer::new(
         ColorCode::new(
-            Color::Green,
-            Color::Black,
+            Color::Yellow,
+            Color::Blue, // High contrast
         )
     );
     
-    mark_kernel_stage(3, "VGA Writer initialized");
+    // Clear and write the welcome message
+    writer.clear_screen();
     
-    // Clear the screen and display startup message
-    writer.write_string("=================================\n");
-    writer.write_string("  Woodix Kernel v0.1.0 Started  \n");
-    writer.write_string("=================================\n\n");
-    
-    // Show basic system info
-    writer.write_string("STATUS: Kernel successfully loaded\n");
-    writer.write_string("VIDEO: VGA text mode initialized at 0xB8000\n\n");
-    
-    mark_kernel_stage(4, "VGA initialization complete");
-    
-    // Demonstrate kernel is running
-    for i in 0..5 {
-        debug_write_str("KERNEL: Still alive, iteration ");
-        debug_write_byte(b'0' + i);
-        // debug_write_byte(b'0' + i);
-        debug_write_str("\n");
-        
-        // Simple delay loop
-        for _ in 0..10000000 {
-            core::hint::spin_loop();
+    // Test each row of the display with distinct content
+    for row in 0..10 {
+        for _ in 0..row {
+            writer.write_byte(b' '); // Indent
         }
+        writer.write_string("Row ");
+        // Convert row number to string manually
+        let digit = b'0' + row as u8;
+        writer.write_byte(digit);
+        writer.write_string(": WOODIX OS TEST LINE\n");
     }
     
-    mark_kernel_stage(5, "Entering final idle loop");
-    
-    // Infinite loop to keep kernel running
-    writer.write_string("System halted.");
-    
-    // Final debug message before loop
-    debug_write_str("KERNEL: Entering final loop - kernel execution complete\n");
-    
-    loop {
-        // CPU halt instruction to save power
-        #[allow(unused_unsafe)]
-        unsafe {
-            // Use a no-op instruction that doesn't require inline asm feature
-            core::hint::spin_loop();
-        }
-    }
+    // ...existing code...
+    loop {}
 }
 
 // Panic handler

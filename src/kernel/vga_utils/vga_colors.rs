@@ -1,6 +1,6 @@
 // VGA color definitions
 
-#[allow(dead_code)]
+// Enum for VGA colors
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Color {

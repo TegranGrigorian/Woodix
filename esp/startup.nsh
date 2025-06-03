@@ -1,9 +1,12 @@
 @echo -off
-echo "=== Directory Listing ==="
-ls
-echo "=== EFI Directory ==="
-ls EFI
-echo "=== WOODIX Directory ==="
-ls EFI\WOODIX
-echo "=== Starting Bootloader ==="
-EFI\BOOT\BOOTX64.EFI
+echo Woodix Boot Debug
+echo \EFI
+ls \EFI
+echo \EFI\WOODIX  
+ls \EFI\WOODIX
+echo \EFI\Boot
+ls \EFI\Boot
+echo Root:
+ls \
+echo Loading bootloader manually...
+\EFI\Boot\BOOTX64.EFI

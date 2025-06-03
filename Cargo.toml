@@ -3,25 +3,19 @@ name = "woodix"
 version = "0.1.0"
 edition = "2021"
 authors = ["Your Name <your.email@example.com>"]
-
-[lib]
-path = "src/kernel/main.rs"  # Point back to main.rs, not simple_main.rs
-crate-type = ["staticlib"]
-test = false
-doctest = false
-bench = false
+build = "build.rs"
 
 [profile.dev]
 panic = "abort"
-# Add these for better freestanding compatibility
-debug = true
-lto = "thin"
+debug = false  # Disable debug info
+opt-level = 1  # Basic optimizations
 
 [profile.release]
 panic = "abort"
 lto = true
 opt-level = "z"  # Optimize for size
 codegen-units = 1
+debug = false
 
 [dependencies]
 volatile = "0.2.6"
@@ -29,3 +23,10 @@ spin = "0.5.2"
 
 [lints.rust]
 dead_code = "allow"      # Allows unused code during early development
+
+[[bin]]
+name = "woodix"
+path = "src/kernel/main.rs"
+test = false
+doctest = false
+bench = false

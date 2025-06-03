@@ -1,51 +1,60 @@
 // VGA screen writer implementation
 
 use core::fmt;
+use volatile::Volatile;
+
 use super::vga_color_code::ColorCode;
 use super::vga_colors::Color;
-use super::text_code::{ScreenChar, Buffer, VGA_BUFFER_HEIGHT, VGA_BUFFER_WIDTH};
 
+// Buffer dimensions
+const BUFFER_HEIGHT: usize = 25;
+const BUFFER_WIDTH: usize = 80;
+
+// VGA character struct - represents a character in the buffer
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
+struct ScreenChar {
+    ascii_character: u8,
+    color_code: ColorCode,
+}
+
+// VGA buffer struct - represents the text-mode buffer
+#[repr(transparent)]
+struct Buffer {
+    chars: [[Volatile<ScreenChar>; BUFFER_WIDTH]; BUFFER_HEIGHT],
+}
+
+// Writer for VGA buffer
 pub struct Writer {
     column_position: usize,
     row_position: usize,
     color_code: ColorCode,
-    #[allow(dead_code)]
-    buffer: &'static mut Buffer,
 }
 
 impl Writer {
-    pub fn new(color_code: ColorCode) -> Writer {
-        // Create and initialize the writer
-        let mut writer = Writer {
+    // Create a new Writer with specified color
+    pub fn new(color_code: ColorCode) -> Self {
+        // Create writer
+        let mut writer = Self {
             column_position: 0,
             row_position: 0,
             color_code,
-            buffer: unsafe { &mut *(0xb8000 as *mut Buffer) },
         };
         
-        // Clear the screen on initialization
+        // Clear screen with the new color
         writer.clear_screen();
         
         writer
     }
-
+    
+    // Clear screen
     pub fn clear_screen(&mut self) {
-        let blank = ScreenChar {
-            ascii_character: b' ',
-            color_code: self.color_code,
-        };
-
-        for row in 0..VGA_BUFFER_HEIGHT {
-            for col in 0..VGA_BUFFER_WIDTH {
-                unsafe {
-                    // We need to use raw pointer operations because Buffer doesn't implement Volatile correctly
-                    let buffer_ptr = 0xb8000 as *mut u16;
-                    let offset = row * VGA_BUFFER_WIDTH + col;
-                    let char_value = (self.color_code.0 as u16) << 8 | (blank.ascii_character as u16);
-                    
-                    // Write the character to video memory
-                    buffer_ptr.add(offset).write_volatile(char_value);
-                }
+        // Direct VGA manipulation for screen clearing
+        unsafe {
+            let vga_buffer = 0xb8000 as *mut u16;
+            for i in 0..BUFFER_HEIGHT * BUFFER_WIDTH {
+                // Space character with color attribute
+                *vga_buffer.add(i) = 0x20 | (u16::from(self.color_code.0) << 8);
             }
         }
         
@@ -53,112 +62,84 @@ impl Writer {
         self.column_position = 0;
         self.row_position = 0;
     }
-
+    
+    // Write a single byte
     pub fn write_byte(&mut self, byte: u8) {
         match byte {
             b'\n' => self.new_line(),
-            b'\r' => self.column_position = 0,
-            b'\t' => {
-                // Handle tab by inserting spaces (4 spaces per tab)
-                for _ in 0..4 {
-                    if self.column_position < VGA_BUFFER_WIDTH {
-                        self.write_byte(b' ');
-                    }
-                }
-            },
-            b'\x08' => {
-                // Backspace - move back one character if possible
-                if self.column_position > 0 {
-                    self.column_position -= 1;
-                    self.write_byte(b' ');
-                    self.column_position -= 1;
-                }
-            },
-            _ => {
-                if self.column_position >= VGA_BUFFER_WIDTH {
+            byte => {
+                if self.column_position >= BUFFER_WIDTH {
                     self.new_line();
                 }
-
-                let row = self.row_position;
-                let col = self.column_position;
-
-                let color_code = self.color_code;
-                let char_value = ScreenChar {
-                    ascii_character: byte,
-                    color_code,
-                };
-
-                // We need to use raw pointer operations to ensure volatile writes
+                
+                // Get a reference to the VGA buffer
+                let vga_buffer = 0xb8000 as *mut u16;
+                let index = self.row_position * BUFFER_WIDTH + self.column_position;
+                
                 unsafe {
-                    let buffer_ptr = 0xb8000 as *mut u16;
-                    let offset = row * VGA_BUFFER_WIDTH + col;
-                    let value = (char_value.color_code.0 as u16) << 8 | (char_value.ascii_character as u16);
-                    
-                    // Write the character to video memory
-                    buffer_ptr.add(offset).write_volatile(value);
+                    // Directly write to VGA memory
+                    *vga_buffer.add(index) = u16::from(byte) | (u16::from(self.color_code.0) << 8);
                 }
-
+                
                 self.column_position += 1;
             }
         }
     }
-
+    
+    // Write a string
     pub fn write_string(&mut self, s: &str) {
         for byte in s.bytes() {
             match byte {
-                // printable ASCII byte or newline
-                0x20..=0x7e | b'\n' | b'\r' | b'\t' | b'\x08' => self.write_byte(byte),
-                // not part of printable ASCII range
-                _ => self.write_byte(0xfe),
+                // Printable ASCII or newline
+                0x20..=0x7e | b'\n' => self.write_byte(byte),
+                // Not part of printable ASCII range
+                _ => self.write_byte(0xfe), // ■
             }
         }
+        
+        // Make sure changes are visible by using a memory barrier
+        unsafe {
+            core::arch::asm!("mfence", options(nomem, nostack));
+        }
     }
-
+    
+    // Handle newlines
     fn new_line(&mut self) {
-        if self.row_position < VGA_BUFFER_HEIGHT - 1 {
-            // If we're not at the bottom, just move down
+        self.column_position = 0;
+        
+        if self.row_position < BUFFER_HEIGHT - 1 {
             self.row_position += 1;
         } else {
-            // Need to scroll the screen up
-            for row in 1..VGA_BUFFER_HEIGHT {
-                for col in 0..VGA_BUFFER_WIDTH {
-                    unsafe {
-                        let buffer_ptr = 0xb8000 as *mut u16;
-                        let src_offset = row * VGA_BUFFER_WIDTH + col;
-                        let dst_offset = (row - 1) * VGA_BUFFER_WIDTH + col;
-                        
-                        let char_value = buffer_ptr.add(src_offset).read_volatile();
-                        buffer_ptr.add(dst_offset).write_volatile(char_value);
-                    }
+            // Scroll the screen (shift all lines up)
+            self.scroll_up();
+        }
+    }
+    
+    // Scroll the screen up one line
+    fn scroll_up(&mut self) {
+        unsafe {
+            let vga_buffer = 0xb8000 as *mut u16;
+            
+            // Move all rows up one line
+            for row in 1..BUFFER_HEIGHT {
+                for col in 0..BUFFER_WIDTH {
+                    let from_index = row * BUFFER_WIDTH + col;
+                    let to_index = (row - 1) * BUFFER_WIDTH + col;
+                    *vga_buffer.add(to_index) = *vga_buffer.add(from_index);
                 }
             }
             
-            // Clear the bottom row
-            self.clear_row(VGA_BUFFER_HEIGHT - 1);
-        }
-        
-        self.column_position = 0;
-    }
-
-    fn clear_row(&mut self, row: usize) {
-        let blank = ScreenChar {
-            ascii_character: b' ',
-            color_code: self.color_code,
-        };
-        
-        for col in 0..VGA_BUFFER_WIDTH {
-            unsafe {
-                let buffer_ptr = 0xb8000 as *mut u16;
-                let offset = row * VGA_BUFFER_WIDTH + col;
-                let char_value = (blank.color_code.0 as u16) << 8 | (blank.ascii_character as u16);
-                
-                // Write the character to video memory
-                buffer_ptr.add(offset).write_volatile(char_value);
+            // Clear the last row
+            let last_row = BUFFER_HEIGHT - 1;
+            for col in 0..BUFFER_WIDTH {
+                let index = last_row * BUFFER_WIDTH + col;
+                *vga_buffer.add(index) = 0x20 | (u16::from(self.color_code.0) << 8);
             }
         }
     }
 }
 
+// Implement fmt::Write for Writer
 impl fmt::Write for Writer {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         self.write_string(s);
